@@ -34,18 +34,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Tüm geçmişi çek
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
       
       - name: Analyze existing release notes format
         id: analyze-format
         run: |
           if [ -f release-notes.md ] && [ -s release-notes.md ]; then
-            # Sanitize and extract first 20 lines to use as format example
             echo "EXISTING_FORMAT<<DELIMITER_EOF" >> $GITHUB_OUTPUT
             head -20 release-notes.md | sed 's/DELIMITER_EOF/DELIMITER_E0F/g' >> $GITHUB_OUTPUT
             echo "DELIMITER_EOF" >> $GITHUB_OUTPUT
           else
-            # Provide a default format template if file doesn't exist
             echo "EXISTING_FORMAT<<DELIMITER_EOF" >> $GITHUB_OUTPUT
             echo "# Release Notes" >> $GITHUB_OUTPUT
             echo "" >> $GITHUB_OUTPUT
@@ -57,13 +61,11 @@ jobs:
       
       - name: Format release notes with AI
         id: format-notes
-        # Note: This action uses AI to format release notes.
-        # Expected output: steps.format-notes.outputs.response
         uses: actions/ai-inference@v1
         with:
           model: openai/gpt-4.1
           prompt: |
-            You are a technical writer tasked with formatting release notes for a CHANGELOG.md file.
+            You are a technical writer tasked with formatting release notes for a release-notes.md file.
             
             Existing release notes format example:
             ${{ steps.analyze-format.outputs.EXISTING_FORMAT }}
@@ -86,68 +88,103 @@ jobs:
       - name: Validate AI response
         run: |
           RESPONSE="${{ steps.format-notes.outputs.response }}"
-          # Remove whitespace and check if response has meaningful content
           TRIMMED=$(echo "$RESPONSE" | tr -d '[:space:]')
           if [ -z "$TRIMMED" ]; then
             echo "Error: AI inference returned empty or whitespace-only response"
             exit 1
           fi
           
-          # Verify response contains bullet points
           if ! echo "$RESPONSE" | grep -q '^- '; then
             echo "Warning: AI response doesn't contain expected bullet point format"
             echo "Response: $RESPONSE"
-            # Still continue but log the warning
           fi
       
-      - name: Create branch and update CHANGELOG
+      - name: Update release-notes.md
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          BRANCH="docs/release-${{ github.event.client_payload.version }}"
-          
-          # Önce remote'da bu branch varsa sil
-          git push origin --delete "$BRANCH" 2>/dev/null || true
-          
-          # Main'den yeni branch oluştur
-          git checkout -b "$BRANCH"
-          
-          # Create CHANGELOG.md if it doesn't exist
-          if [ ! -f CHANGELOG.md ]; then
-            echo "# Changelog" > CHANGELOG.md
-            echo "" >> CHANGELOG.md
+          # Create release-notes.md if it doesn't exist
+          if [ ! -f release-notes.md ]; then
+            echo "# Release Notes" > release-notes.md
+            echo "" >> release-notes.md
           fi
           
-          # Add new release notes with AI-formatted content
+          # Create temporary file with new content
           {
             echo "## Version ${{ github.event.client_payload.version }} - ${{ github.event.client_payload.name }}"
+            echo ""
             echo "${{ steps.format-notes.outputs.response }}"
             echo ""
             echo "[Release Link](${{ github.event.client_payload.url }})"
             echo ""
-            cat CHANGELOG.md
-          } > temp_changelog.md
+            echo "---"
+            echo ""
+          } > temp_new_entry.md
           
-          mv temp_changelog.md CHANGELOG.md
+          # Combine with existing release-notes.md
+          cat temp_new_entry.md release-notes.md > temp_release_notes.md
+          mv temp_release_notes.md release-notes.md
+          rm temp_new_entry.md
           
-          # Değişiklik olup olmadığını kontrol et
-          if git diff --quiet CHANGELOG.md; then
-            echo "No changes to CHANGELOG.md, forcing a change"
-            echo "" >> CHANGELOG.md
+          # Show changes for debugging
+          echo "=== release-notes.md contents ==="
+          cat release-notes.md
+          echo "=== End of release-notes.md ==="
+      
+      - name: Check for changes
+        id: check-changes
+        run: |
+          git add release-notes.md
+          if git diff --cached --quiet; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "No changes detected in release-notes.md"
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "Changes detected in release-notes.md"
+            git diff --cached
           fi
+      
+      - name: Create branch and commit
+        if: steps.check-changes.outputs.has_changes == 'true'
+        run: |
+          BRANCH="docs/release-${{ github.event.client_payload.version }}"
           
-          git add CHANGELOG.md
-          git commit -m "docs: update CHANGELOG for release ${{ github.event.client_payload.version }}"
+          echo "Current branch: $(git branch --show-current)"
+          echo "Creating new branch: $BRANCH"
+          
+          # Delete remote branch if exists
+          git push origin --delete "$BRANCH" 2>/dev/null || echo "Remote branch doesn't exist, continuing..."
+          
+          # Create and switch to new branch
+          git checkout -b "$BRANCH"
+          
+          echo "Switched to branch: $(git branch --show-current)"
+          
+          # Commit changes
+          git commit -m "docs: update release notes for version ${{ github.event.client_payload.version }}"
+          
+          echo "Commit created:"
+          git log -1 --oneline
+          
+          # Push to remote
+          echo "Pushing to origin/$BRANCH"
           git push -u origin "$BRANCH"
+          
+          echo "Push completed successfully"
+          
+          # Verify remote branch exists
+          git ls-remote --heads origin "$BRANCH"
       
       - name: Create Pull Request
+        if: steps.check-changes.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # Önce aynı isimde açık PR var mı kontrol et
-          EXISTING_PR=$(gh pr list --head "docs/release-${{ github.event.client_payload.version }}" --json number --jq '.[0].number' || echo "")
+          BRANCH="docs/release-${{ github.event.client_payload.version }}"
+          
+          echo "Checking for existing PR..."
+          EXISTING_PR=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
           
           if [ -n "$EXISTING_PR" ]; then
-            echo "PR already exists with number: $EXISTING_PR"
+            echo "Updating existing PR #$EXISTING_PR"
             gh pr edit "$EXISTING_PR" \
               --title "📚 Release ${{ github.event.client_payload.version }}: ${{ github.event.client_payload.name }}" \
               --body "Auto-generated documentation update from release
@@ -158,6 +195,10 @@ jobs:
 
           [View Release](${{ github.event.client_payload.url }})"
           else
+            echo "Creating new PR..."
+            # Wait a moment for GitHub to sync
+            sleep 2
+            
             gh pr create \
               --title "📚 Release ${{ github.event.client_payload.version }}: ${{ github.event.client_payload.name }}" \
               --body "Auto-generated documentation update from release
@@ -168,7 +209,12 @@ jobs:
 
           [View Release](${{ github.event.client_payload.url }})" \
               --base main \
-              --head "docs/release-${{ github.event.client_payload.version }}"
+              --head "$BRANCH"
           fi
-        env:
-          GH_TOKEN: ${{ github.token }}
+      
+      - name: No changes detected
+        if: steps.check-changes.outputs.has_changes == 'false'
+        run: |
+          echo "⚠️ No changes were detected in release-notes.md"
+          echo "This might mean the release notes are identical to existing content"
+          exit 0
