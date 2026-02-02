@@ -19,14 +19,14 @@ jobs:
           BRANCH="docs/release-${{ github.event.client_payload.version }}"
           git checkout -b "$BRANCH"
           
-          # CHANGELOG.md dosyası yoksa oluştur
+          # Create CHANGELOG.md if it doesn't exist
           if [ ! -f CHANGELOG.md ]; then
             echo "# Changelog" > CHANGELOG.md
             echo "" >> CHANGELOG.md
           fi
           
-          # Yeni release notlarını ekle
-          cat << 'EOF' > temp_changelog.md
+          # Add new release notes
+          cat << EOF > temp_changelog.md
           ## ${{ github.event.client_payload.version }} - ${{ github.event.client_payload.name }}
           
           ${{ github.event.client_payload.notes }}
