@@ -8,6 +8,25 @@ jobs:
   create-pr:
     runs-on: ubuntu-latest
     steps:
+      - name: Validate payload
+        run: |
+          if [ -z "${{ github.event.client_payload.version }}" ]; then
+            echo "Error: version is required"
+            exit 1
+          fi
+          if [ -z "${{ github.event.client_payload.name }}" ]; then
+            echo "Error: name is required"
+            exit 1
+          fi
+          if [ -z "${{ github.event.client_payload.notes }}" ]; then
+            echo "Error: notes is required"
+            exit 1
+          fi
+          if [ -z "${{ github.event.client_payload.url }}" ]; then
+            echo "Error: url is required"
+            exit 1
+          fi
+      
       - name: Checkout
         uses: actions/checkout@v4
       
@@ -49,11 +68,11 @@ jobs:
           gh pr create \
             --title "📚 Release ${{ github.event.client_payload.version }}" \
             --body "Auto-generated documentation update from release
-            
+
           ## ${{ github.event.client_payload.name }}
-            
+
           ${{ github.event.client_payload.notes }}
-            
+
           [View Release](${{ github.event.client_payload.url }})" \
             --base main \
             --head "docs/release-${{ github.event.client_payload.version }}"
