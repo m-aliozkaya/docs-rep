@@ -58,6 +58,7 @@ jobs:
         # Expected output: steps.format-notes.outputs.response
         uses: actions/ai-inference@v1
         with:
+          model: gpt-4o-mini
           prompt: |
             You are a technical writer tasked with formatting release notes for a CHANGELOG.md file.
             
