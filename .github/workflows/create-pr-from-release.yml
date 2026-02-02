@@ -208,7 +208,7 @@ jobs:
           ${{ steps.format-notes.outputs.response }}
 
           [View Release](${{ github.event.client_payload.url }})" \
-              --base main \
+              --base master \
               --head "$BRANCH"
           fi
       
