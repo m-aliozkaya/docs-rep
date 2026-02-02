@@ -10,7 +10,6 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      models: read  # Required for AI inference action to access language models
     steps:
       - name: Validate payload
         run: |
@@ -72,8 +71,11 @@ jobs:
       
       - name: Validate AI response
         run: |
-          if [ -z "${{ steps.format-notes.outputs.response }}" ]; then
-            echo "Error: AI inference returned empty response"
+          RESPONSE="${{ steps.format-notes.outputs.response }}"
+          # Remove whitespace and check if response has meaningful content
+          TRIMMED=$(echo "$RESPONSE" | tr -d '[:space:]')
+          if [ -z "$TRIMMED" ]; then
+            echo "Error: AI inference returned empty or whitespace-only response"
             exit 1
           fi
       
@@ -92,7 +94,7 @@ jobs:
           fi
           
           # Add new release notes with AI-formatted content
-          cat << 'EOF' > temp_changelog.md
+          cat << EOF > temp_changelog.md
           ## Version ${{ github.event.client_payload.version }} - ${{ github.event.client_payload.name }}
           ${{ steps.format-notes.outputs.response }}
           
