@@ -9,6 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      models: read 
       pull-requests: write
     steps:
       - name: Validate payload
