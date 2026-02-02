@@ -1,0 +1,61 @@
+name: Create PR from Release
+
+on:
+  repository_dispatch:
+    types: [update_docs]
+
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Create branch and update CHANGELOG
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          BRANCH="docs/release-${{ github.event.client_payload.version }}"
+          git checkout -b "$BRANCH"
+          
+          # CHANGELOG.md dosyası yoksa oluştur
+          if [ ! -f CHANGELOG.md ]; then
+            echo "# Changelog" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+          fi
+          
+          # Yeni release notlarını ekle
+          cat << 'EOF' > temp_changelog.md
+          ## ${{ github.event.client_payload.version }} - ${{ github.event.client_payload.name }}
+          
+          ${{ github.event.client_payload.notes }}
+          
+          [Release Link](${{ github.event.client_payload.url }})
+          
+          ---
+          
+          EOF
+          
+          cat CHANGELOG.md >> temp_changelog.md
+          mv temp_changelog.md CHANGELOG.md
+          
+          git add CHANGELOG.md
+          git commit -m "docs: update CHANGELOG for release ${{ github.event.client_payload.version }}"
+          git push origin "$BRANCH"
+      
+      - name: Create Pull Request
+        run: |
+          gh pr create \
+            --title "📚 Release ${{ github.event.client_payload.version }}" \
+            --body "Auto-generated documentation update from release
+            
+          ## ${{ github.event.client_payload.name }}
+            
+          ${{ github.event.client_payload.notes }}
+            
+          [View Release](${{ github.event.client_payload.url }})" \
+            --base main \
+            --head "docs/release-${{ github.event.client_payload.version }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
