@@ -36,16 +36,26 @@ jobs:
       - name: Analyze existing release notes format
         id: analyze-format
         run: |
-          if [ -f release-notes.md ]; then
-            echo "EXISTING_FORMAT<<EOF" >> $GITHUB_OUTPUT
-            head -20 release-notes.md >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
+          if [ -f release-notes.md ] && [ -s release-notes.md ]; then
+            # Sanitize and extract first 20 lines to use as format example
+            echo "EXISTING_FORMAT<<DELIMITER_EOF" >> $GITHUB_OUTPUT
+            head -20 release-notes.md | sed 's/DELIMITER_EOF/DELIMITER_E0F/g' >> $GITHUB_OUTPUT
+            echo "DELIMITER_EOF" >> $GITHUB_OUTPUT
           else
-            echo "EXISTING_FORMAT=No existing format found" >> $GITHUB_OUTPUT
+            # Provide a default format template if file doesn't exist
+            echo "EXISTING_FORMAT<<DELIMITER_EOF" >> $GITHUB_OUTPUT
+            echo "# Release Notes" >> $GITHUB_OUTPUT
+            echo "" >> $GITHUB_OUTPUT
+            echo "## Version 1.0.0" >> $GITHUB_OUTPUT
+            echo "- Initial release" >> $GITHUB_OUTPUT
+            echo "- Basic documentation structure" >> $GITHUB_OUTPUT
+            echo "DELIMITER_EOF" >> $GITHUB_OUTPUT
           fi
       
       - name: Format release notes with AI
         id: format-notes
+        # Note: This action uses AI to format release notes.
+        # Expected output: steps.format-notes.outputs.response
         uses: actions/ai-inference@v1
         with:
           prompt: |
@@ -77,6 +87,13 @@ jobs:
           if [ -z "$TRIMMED" ]; then
             echo "Error: AI inference returned empty or whitespace-only response"
             exit 1
+          fi
+          
+          # Verify response contains bullet points
+          if ! echo "$RESPONSE" | grep -q '^- '; then
+            echo "Warning: AI response doesn't contain expected bullet point format"
+            echo "Response: $RESPONSE"
+            # Still continue but log the warning
           fi
       
       - name: Create branch and update CHANGELOG
