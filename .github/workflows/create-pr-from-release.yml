@@ -1,145 +1,55 @@
-name: Create PR from Release
+- name: Create branch and update CHANGELOG
+  run: |
+    set -euxo pipefail
 
-on:
-  repository_dispatch:
-    types: [update_docs]
+    git config user.name "github-actions[bot]"
+    git config user.email "github-actions[bot]@users.noreply.github.com"
 
-jobs:
-  create-pr:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      models: read 
-      pull-requests: write
-    steps:
-      - name: Validate payload
-        run: |
-          if [ -z "${{ github.event.client_payload.version }}" ]; then
-            echo "Error: version is required"
-            exit 1
-          fi
-          if [ -z "${{ github.event.client_payload.name }}" ]; then
-            echo "Error: name is required"
-            exit 1
-          fi
-          if [ -z "${{ github.event.client_payload.notes }}" ]; then
-            echo "Error: notes is required"
-            exit 1
-          fi
-          if [ -z "${{ github.event.client_payload.url }}" ]; then
-            echo "Error: url is required"
-            exit 1
-          fi
-      
-      - name: Checkout
-        uses: actions/checkout@v4
-      
-      - name: Analyze existing release notes format
-        id: analyze-format
-        run: |
-          if [ -f release-notes.md ] && [ -s release-notes.md ]; then
-            # Sanitize and extract first 20 lines to use as format example
-            echo "EXISTING_FORMAT<<DELIMITER_EOF" >> $GITHUB_OUTPUT
-            head -20 release-notes.md | sed 's/DELIMITER_EOF/DELIMITER_E0F/g' >> $GITHUB_OUTPUT
-            echo "DELIMITER_EOF" >> $GITHUB_OUTPUT
-          else
-            # Provide a default format template if file doesn't exist
-            echo "EXISTING_FORMAT<<DELIMITER_EOF" >> $GITHUB_OUTPUT
-            echo "# Release Notes" >> $GITHUB_OUTPUT
-            echo "" >> $GITHUB_OUTPUT
-            echo "## Version 1.0.0" >> $GITHUB_OUTPUT
-            echo "- Initial release" >> $GITHUB_OUTPUT
-            echo "- Basic documentation structure" >> $GITHUB_OUTPUT
-            echo "DELIMITER_EOF" >> $GITHUB_OUTPUT
-          fi
-      
-      - name: Format release notes with AI
-        id: format-notes
-        # Note: This action uses AI to format release notes.
-        # Expected output: steps.format-notes.outputs.response
-        uses: actions/ai-inference@v1
-        with:
-          model: openai/gpt-4.1
-          prompt: |
-            You are a technical writer tasked with formatting release notes for a CHANGELOG.md file.
-            
-            Existing release notes format example:
-            ${{ steps.analyze-format.outputs.EXISTING_FORMAT }}
-            
-            New release information:
-            Version: ${{ github.event.client_payload.version }}
-            Name: ${{ github.event.client_payload.name }}
-            Raw notes: ${{ github.event.client_payload.notes }}
-            
-            Instructions:
-            1. Analyze the raw release notes and extract only the essential and relevant changes
-            2. Format them to match the existing release notes style (using bullet points with "-")
-            3. Keep it concise and professional
-            4. Only include meaningful changes, skip redundant information
-            5. Return ONLY the formatted bullet points, one per line, starting with "- "
-            6. Do not include the version header or any other formatting
-            
-            Output only the bullet points for this release.
-      
-      - name: Validate AI response
-        run: |
-          RESPONSE="${{ steps.format-notes.outputs.response }}"
-          # Remove whitespace and check if response has meaningful content
-          TRIMMED=$(echo "$RESPONSE" | tr -d '[:space:]')
-          if [ -z "$TRIMMED" ]; then
-            echo "Error: AI inference returned empty or whitespace-only response"
-            exit 1
-          fi
-          
-          # Verify response contains bullet points
-          if ! echo "$RESPONSE" | grep -q '^- '; then
-            echo "Warning: AI response doesn't contain expected bullet point format"
-            echo "Response: $RESPONSE"
-            # Still continue but log the warning
-          fi
-      
-      - name: Create branch and update CHANGELOG
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          BRANCH="docs/release-${{ github.event.client_payload.version }}"
-          git checkout -b "$BRANCH"
-          
-          # Create CHANGELOG.md if it doesn't exist
-          if [ ! -f CHANGELOG.md ]; then
-            echo "# Changelog" > CHANGELOG.md
-            echo "" >> CHANGELOG.md
-          fi
-          
-          # Add new release notes with AI-formatted content
-          cat << EOF > temp_changelog.md
-          ## Version ${{ github.event.client_payload.version }} - ${{ github.event.client_payload.name }}
-          ${{ steps.format-notes.outputs.response }}
-          
-          [Release Link](${{ github.event.client_payload.url }})
-          
-          EOF
-          
-          cat CHANGELOG.md >> temp_changelog.md
-          mv temp_changelog.md CHANGELOG.md
-          
-          git add CHANGELOG.md
-          git commit -m "docs: update CHANGELOG for release ${{ github.event.client_payload.version }}"
-          git push origin "$BRANCH"
-      
-      - name: Create Pull Request
-        run: |
-          gh pr create \
-            --title "📚 Release ${{ github.event.client_payload.version }}: ${{ github.event.client_payload.name }}" \
-            --body "Auto-generated documentation update from release
+    BRANCH="docs/release-${{ github.event.client_payload.version }}"
 
-          ## Version ${{ github.event.client_payload.version }} - ${{ github.event.client_payload.name }}
+    DEFAULT_BRANCH=$(git remote show origin | sed -n 's/.*HEAD branch: //p')
+    echo "Default branch: $DEFAULT_BRANCH"
+    echo "Branch: $BRANCH"
 
-          ${{ steps.format-notes.outputs.response }}
+    git checkout -B "$BRANCH" "origin/$DEFAULT_BRANCH"
 
-          [View Release](${{ github.event.client_payload.url }})" \
-            --base main \
-            --head "docs/release-${{ github.event.client_payload.version }}"
-        env:
-          GH_TOKEN: ${{ github.token }}
+    if [ ! -f CHANGELOG.md ]; then
+      printf "# Changelog\n\n" > CHANGELOG.md
+    fi
+
+    cat > temp_changelog.md <<EOF
+## Version ${{ github.event.client_payload.version }} - ${{ github.event.client_payload.name }}
+${{ steps.format-notes.outputs.response }}
+
+[Release Link](${{ github.event.client_payload.url }})
+
+EOF
+
+    cat CHANGELOG.md >> temp_changelog.md
+    mv temp_changelog.md CHANGELOG.md
+
+    git add CHANGELOG.md
+    git diff --cached --quiet && { echo "No changes to commit"; exit 1; }
+
+    git commit -m "docs: update CHANGELOG for release ${{ github.event.client_payload.version }}"
+    git push -u origin "$BRANCH"
+
+- name: Create Pull Request
+  run: |
+    set -euxo pipefail
+
+    DEFAULT_BRANCH=$(git remote show origin | sed -n 's/.*HEAD branch: //p')
+    BRANCH="docs/release-${{ github.event.client_payload.version }}"
+
+    gh pr create \
+      --title "📚 Release ${{ github.event.client_payload.version }}: ${{ github.event.client_payload.name }}" \
+      --body "Auto-generated documentation update from release
+
+## Version ${{ github.event.client_payload.version }} - ${{ github.event.client_payload.name }}
+${{ steps.format-notes.outputs.response }}
+
+[View Release](${{ github.event.client_payload.url }})" \
+      --base "$DEFAULT_BRANCH" \
+      --head "$BRANCH"
+  env:
+    GH_TOKEN: ${{ github.token }}
