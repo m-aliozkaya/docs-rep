@@ -10,7 +10,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      models: read
+      models: read  # Required for AI inference action to access language models
     steps:
       - name: Validate payload
         run: |
@@ -70,6 +70,13 @@ jobs:
             
             Output only the bullet points for this release.
       
+      - name: Validate AI response
+        run: |
+          if [ -z "${{ steps.format-notes.outputs.response }}" ]; then
+            echo "Error: AI inference returned empty response"
+            exit 1
+          fi
+      
       - name: Create branch and update CHANGELOG
         run: |
           git config user.name "github-actions[bot]"
@@ -86,7 +93,7 @@ jobs:
           
           # Add new release notes with AI-formatted content
           cat << 'EOF' > temp_changelog.md
-          ## Version ${{ github.event.client_payload.version }}
+          ## Version ${{ github.event.client_payload.version }} - ${{ github.event.client_payload.name }}
           ${{ steps.format-notes.outputs.response }}
           
           [Release Link](${{ github.event.client_payload.url }})
@@ -103,10 +110,10 @@ jobs:
       - name: Create Pull Request
         run: |
           gh pr create \
-            --title "📚 Release ${{ github.event.client_payload.version }}" \
+            --title "📚 Release ${{ github.event.client_payload.version }}: ${{ github.event.client_payload.name }}" \
             --body "Auto-generated documentation update from release
 
-          ## Version ${{ github.event.client_payload.version }}
+          ## Version ${{ github.event.client_payload.version }} - ${{ github.event.client_payload.name }}
 
           ${{ steps.format-notes.outputs.response }}
 
